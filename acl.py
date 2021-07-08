@@ -3,6 +3,7 @@
 
 import telnetlib
 import getpass
+import re
 
 params = {
     'ip': '', 'username': '', 'password': '', 'enable': '',
@@ -35,9 +36,9 @@ def acl_change(ip, username, password, enable, direction, acl1, acl2, interface)
         if index == 0 and enable != False: privelege_mode(telnet, enable)
         # Get interface ACL
         telnet.write(to_bytes(f"sh ip int {interface} | include {direction}"))
-        output = telnet.read_until(b"#", timeout=5).decode("utf-8")
-        result = output.replace("\r\n", "\n")
+        output = telnet.read_until(b'#', timeout=5).decode('utf-8').replace('\r\n', '\n')
+        result = re.search(r'access list is (?P<ACL>.+)\n', output)
         return result
 
 result = acl_change(**params)
-print(result)
+print(result['ACL'])
