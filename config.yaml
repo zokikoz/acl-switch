@@ -1,0 +1,8 @@
+- ip:
+  username:
+  password:
+  enable: false
+  direction: Inbound # Inbound / Outgoing
+  acl1: not set # Use 'not set' to clear ACL
+  acl2: not set
+  interface:

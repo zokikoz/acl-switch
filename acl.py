@@ -4,30 +4,37 @@
 import telnetlib
 import getpass
 import re
+import yaml
 
 # Default configuration
-params = {
-    'ip': '', 'username': '', 'password': '', 'enable': '',
-    'direction': 'Inbound', 'acl1': 'not set', 'acl2': 'not set', 'interface': 'gi0/0'
-    }
+params = [{
+    'ip': None, 'username': None, 'password': None, 'enable': False,
+    'direction': 'Inbound', 'acl1': 'not set', 'acl2': 'not set', 'interface': None
+    }]
+
+try:
+    with open('config.yaml') as f:
+        params = yaml.safe_load(f)
+except FileNotFoundError:
+   print('config.yaml not found, using built-in configuration')
 
 def to_bytes(string):
     return f"{string}\n".encode('utf-8')
 
-def login(telnet):
+def login(telnet, param):
     # Accessing to device
-    if params['username']:
+    if param['username']:
         telnet.read_until(b'Username')
-        telnet.write(to_bytes(params['username']))
+        telnet.write(to_bytes(param['username']))
     telnet.read_until(b'Password')
-    telnet.write(to_bytes(params['password']))
+    telnet.write(to_bytes(param['password']))
     # Checking enable status
     index, *_ = telnet.expect([b'>', b'#'])
     # Switching to privilege mode using enable password
-    if index == 0 and params['enable'] != False:
+    if index == 0 and param['enable'] != False:
         telnet.write(b'enable\n')
         telnet.read_until(b'Password')
-        telnet.write(to_bytes(params['enable']))
+        telnet.write(to_bytes(param['enable']))
         telnet.read_until(b'#', timeout=5)
 
 def execute(telnet, commands):
@@ -39,12 +46,12 @@ def execute(telnet, commands):
         result[command] = output.replace('\r\n', '\n')
     return result
 
-def set_acl_cmd(output, direction = params['direction']):
+def set_acl_cmd(output, param):
     # Setting new ACL different from current
-    if output['ACL'] == params['acl1']:
-        acl = params['acl2']
-    elif output['ACL'] == params['acl2']:
-        acl = params['acl1']
+    if output['ACL'] == param['acl1']:
+        acl = param['acl2']
+    elif output['ACL'] == param['acl2']:
+        acl = param['acl1']
     else:
         return False
     # Setting direction for ACL command
@@ -56,23 +63,24 @@ def set_acl_cmd(output, direction = params['direction']):
     else: 
         acl = f'ip access {acl} {direction}'
     # Setting full commands list
-    return ['conf t', f"int {params['interface']}", acl]
+    return ['conf t', f"int {param['interface']}", acl]
 
-def acl_change():
-    with telnetlib.Telnet(params['ip']) as telnet:
-        login(telnet)
+def acl_change(param):
+    with telnetlib.Telnet(param['ip']) as telnet:
+        login(telnet, param)
         # Getting interface ACL
-        telnet.write(to_bytes(f"sh ip int {params['interface']} | include {params['direction']}"))
+        telnet.write(to_bytes(f"sh ip int {param['interface']} | include {param['direction']}"))
         output = telnet.read_until(b'#', timeout=5).decode('utf-8').replace('\r\n', '\n')
         output = re.search(r'access list is (?P<ACL>.+)\n', output)
         # Preparing commands list
-        commands = set_acl_cmd(output)
+        commands = set_acl_cmd(output, param)
         return execute(telnet, commands)
-        
-if not params['ip']: params['ip'] = input('IP: ')
-if not params['username']: params['username'] = input('Username: ')
-if not params['password']: params['password'] = getpass.getpass()
-if not params['enable'] and params['enable'] != False: params['enable'] = getpass.getpass('Enable: ')
 
-result = acl_change()
-print(result)
+for param in params:
+    if not param['ip']: param['ip'] = input('IP: ')
+    if not param['username']: param['username'] = input('Username: ')
+    if not param['password']: param['password'] = getpass.getpass()
+    if not param['enable'] and param['enable'] != False: param['enable'] = getpass.getpass('Enable: ')
+
+    result = acl_change(param)
+    print(result)
