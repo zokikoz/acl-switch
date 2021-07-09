@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Cisco ACL changer
+# Cisco ACL switch
 
 import telnetlib
 import getpass
@@ -30,11 +30,20 @@ def login(telnet):
         telnet.write(to_bytes(params['enable']))
         telnet.read_until(b'#', timeout=5)
 
-def set_acl_cmd(device, direction = params['direction']):
+def execute(telnet, commands):
+    # Running commands
+    result = {}
+    for command in commands:
+        telnet.write(to_bytes(command))
+        output = telnet.read_until(b'#', timeout=5).decode('utf-8')
+        result[command] = output.replace('\r\n', '\n')
+    return result
+
+def set_acl_cmd(output, direction = params['direction']):
     # Setting new ACL different from current
-    if device['ACL'] == params['acl1']:
+    if output['ACL'] == params['acl1']:
         acl = params['acl2']
-    elif device['ACL'] == params['acl2']:
+    elif output['ACL'] == params['acl2']:
         acl = params['acl1']
     else:
         return False
@@ -55,17 +64,11 @@ def acl_change():
         # Getting interface ACL
         telnet.write(to_bytes(f"sh ip int {params['interface']} | include {params['direction']}"))
         output = telnet.read_until(b'#', timeout=5).decode('utf-8').replace('\r\n', '\n')
-        device = re.search(r'access list is (?P<ACL>.+)\n', output)
+        output = re.search(r'access list is (?P<ACL>.+)\n', output)
         # Preparing commands list
-        commands = set_acl_cmd(device)
-        # Running commands
-        result = {}
-        for command in commands:
-            telnet.write(to_bytes(command))
-            output = telnet.read_until(b'#', timeout=5).decode('utf-8')
-            result[command] = output.replace('\r\n', '\n')
-        return result
-
+        commands = set_acl_cmd(output)
+        return execute(telnet, commands)
+        
 if not params['ip']: params['ip'] = input('IP: ')
 if not params['username']: params['username'] = input('Username: ')
 if not params['password']: params['password'] = getpass.getpass()
