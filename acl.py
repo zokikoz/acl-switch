@@ -5,6 +5,9 @@ import telnetlib
 import getpass
 import re
 import yaml
+#import sys
+
+#sys.tracebacklimit = 0  # Hide traceback
 
 # Default configuration
 params = [{
@@ -23,7 +26,7 @@ def to_bytes(string):
 
 def input_check(param):
     if not param['ip']: param['ip'] = input('IP: ')
-    if not param['username']: param['username'] = input('Username: ')
+    if not param['username'] and param['username'] != False: param['username'] = input('Username: ')
     if not param['password']: param['password'] = getpass.getpass()
     if not param['enable'] and param['enable'] != False: param['enable'] = getpass.getpass('Enable: ')
     if not param['acl1']: param['acl1'] = input('ACL 1: ')
@@ -34,18 +37,21 @@ def input_check(param):
 def login(telnet, param):
     # Accessing to device
     if param['username']:
-        telnet.read_until(b'Username')
+        telnet.read_until(b'Username', timeout=5)
         telnet.write(to_bytes(param['username']))
-    telnet.read_until(b'Password')
+    telnet.read_until(b'Password', timeout=5)
     telnet.write(to_bytes(param['password']))
     # Checking enable status
-    index, *_ = telnet.expect([b'>', b'#'])
+    index, *_ = telnet.expect([b'>', b'#'], timeout=5)
     # Switching to privilege mode using enable password
-    if index == 0 and param['enable'] != False:
+    if index == -1:
+        raise ConnectionError('Unable to login')
+    elif index == 0 and param['enable'] != False:
         telnet.write(b'enable\n')
-        telnet.read_until(b'Password')
+        telnet.read_until(b'Password', timeout=5)
         telnet.write(to_bytes(param['enable']))
-        telnet.read_until(b'#', timeout=5)
+        index, *_ = telnet.expect([b'#'], timeout=5)
+        if index == -1: raise ConnectionError('Unable to set privilege mode')
 
 def execute(telnet, commands):
     # Running commands
@@ -76,15 +82,18 @@ def set_commands(output, param):
     return ['conf t', f"int {param['interface']}", acl]
 
 def acl_change(param):
-    with telnetlib.Telnet(param['ip']) as telnet:
+    with telnetlib.Telnet(param['ip'], 23, 10) as telnet:
         login(telnet, param)
         # Getting interface ACL
         telnet.write(to_bytes(f"sh ip int {param['interface']} | include {param['direction']}"))
         output = telnet.read_until(b'#', timeout=5).decode('utf-8').replace('\r\n', '\n')
         output = re.search(r'access list is (?P<ACL>.+)\n', output)
         # Preparing commands list
-        commands = set_commands(output, param)
-        return execute(telnet, commands)
+        if output:
+            commands = set_commands(output, param)
+            return execute(telnet, commands)
+        else:
+            raise ConnectionError('Unable to access device')
 
 for param in params:
     param = input_check(param)
