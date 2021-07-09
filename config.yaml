@@ -4,5 +4,5 @@
   enable: false
   direction: Inbound # Inbound / Outgoing
   acl1: not set # Use 'not set' to clear ACL
-  acl2: not set
+  acl2: not set # Numbers must be in quotes
   interface:
