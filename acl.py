@@ -5,9 +5,9 @@ import telnetlib
 import getpass
 import re
 import yaml
-#import sys
+import sys
 
-#sys.tracebacklimit = 0  # Hide traceback
+sys.tracebacklimit = 0  # Hide traceback
 
 # Default configuration
 params = [{
@@ -22,7 +22,7 @@ except FileNotFoundError:
    print('config.yaml not found, using built-in configuration')
 
 def to_bytes(string):
-    return f"{string}\n".encode('utf-8')
+    return f'{string}\n'.encode('utf-8')
 
 def input_check(param):
     if not param['ip']: param['ip'] = input('IP: ')
@@ -60,7 +60,20 @@ def execute(telnet, commands):
         telnet.write(to_bytes(command))
         output = telnet.read_until(b'#', timeout=5).decode('utf-8')
         result[command] = output.replace('\r\n', '\n')
+    if len(sys.argv) > 1 and sys.argv[1] == '-v':
+        for i in result.values(): print(i)
     return result
+
+def get_acl(telnet):
+    # Getting interface ACL
+    cmd = f"sh ip int {param['interface']} | include {param['direction']}"
+    output = execute(telnet, [cmd])
+    output = re.search(r'access list is (?P<ACL>.+)\n', output[cmd])
+    if output:
+        print(f"{param['interface']} {param['direction']}: {output['ACL']}")
+        return output
+    else: 
+        raise ConnectionError('Unable to access device')
 
 def set_commands(output, param):
     # Setting new ACL different from current
@@ -69,8 +82,7 @@ def set_commands(output, param):
     elif output['ACL'] == param['acl2']:
         acl = param['acl1']
     else:
-        print('Unable to find selected ACLs on interface')
-        return False
+        raise ConnectionError('Unable to find selected ACLs on interface')
     print(f"Switching ACL: {output['ACL']} -> {acl}")
     # Setting direction for ACL command
     direction = param['direction']
@@ -79,23 +91,16 @@ def set_commands(output, param):
     # Completing ACL command
     acl = f'no ip access {direction}' if acl == 'not set' else f'ip access {acl} {direction}'
     # Setting full commands list
-    return ['conf t', f"int {param['interface']}", acl]
+    return ['conf t', f"int {param['interface']}", acl, 'exit', 'exit']
 
 def acl_change(param):
     with telnetlib.Telnet(param['ip'], 23, 10) as telnet:
         login(telnet, param)
-        # Getting interface ACL
-        telnet.write(to_bytes(f"sh ip int {param['interface']} | include {param['direction']}"))
-        output = telnet.read_until(b'#', timeout=5).decode('utf-8').replace('\r\n', '\n')
-        output = re.search(r'access list is (?P<ACL>.+)\n', output)
-        # Preparing commands list
-        if output:
-            commands = set_commands(output, param)
-            return execute(telnet, commands)
-        else:
-            raise ConnectionError('Unable to access device')
+        output = get_acl(telnet)  # Getting current ACL on interface
+        commands = set_commands(output, param)  # Preparing commands list for ACL switch
+        execute(telnet, commands)
+        get_acl(telnet)
 
 for param in params:
     param = input_check(param)
-    result = acl_change(param)
-    print(result)
+    acl_change(param)
