@@ -9,14 +9,88 @@ import sys
 
 sys.tracebacklimit = 0  # Hide traceback
 
-# Default parameters
-params = [{
-    'ip': None, 'username': None, 'password': None, 'enable': None,
-    'direction': 'Inbound', 'acl1': None, 'acl2': None, 'interface': None
-    }]
 
-def to_bytes(string):
-    return f'{string}\n'.encode('utf-8')
+class CiscoTelnet:
+    """Cisco device access via telnet session"""
+    
+    def __init__(self, telnet, param={}):
+        self.param = {
+            'ip': None,
+            'username': None,
+            'password': None,
+            'enable': None,
+            'direction': 'Inbound',
+            'acl1': None,
+            'acl2': None,
+            'interface': None
+            }
+        self.param.update(param)
+        self.tn = telnet
+
+    def login(self, timeout=3):
+        """Cisco device login"""
+        if self.param['username']:
+            self.tn.read_until(b'Username', timeout)
+            self.tn.write(self.to_bytes(self.param['username']))
+        self.tn.read_until(b'Password', timeout)
+        self.tn.write(self.to_bytes(self.param['password']))
+        # Checking enable status
+        index, *_ = self.tn.expect([b'>', b'#'], timeout)
+        # Switching to privilege mode using enable password
+        if index == -1:
+            raise ConnectionError('Unable to login')
+        elif index == 0 and self.param['enable']:
+            self.tn.write(b'enable\n')
+            self.tn.read_until(b'Password', timeout)
+            self.tn.write(self.to_bytes(self.param['enable']))
+            index, *_ = self.tn.expect([b'#'], timeout)
+            if index == -1: raise ConnectionError('Unable to set privilege mode')
+
+    def execute(self, commands, timeout=5):
+        """Running command list"""
+        result = {}
+        for command in commands:
+            self.tn.write(self.to_bytes(command))
+            output = self.tn.read_until(b'#', timeout).decode('utf-8')
+            result[command] = output.replace('\r\n', '\n')
+        if len(sys.argv[1:]) and sys.argv[1] == '-v':
+            for i in result.values(): print(i)
+        return result
+
+    def get_acl(self):
+        """Getting current ACL on interface"""
+        cmd = f"sh ip int {self.param['interface']} | include {self.param['direction']}"
+        output = self.execute([cmd])
+        output = re.search(r'access list is (?P<ACL>.+)\n', output[cmd])
+        if output:
+            print(f"{self.param['interface']} {self.param['direction']}: {output['ACL']}")
+            return output
+        else: 
+            raise ConnectionError('Unable to access device')
+
+    def set_acl_cmd(self, interface):
+        """Preparing command list for ACL switch"""
+        # Setting new ACL different from current
+        if interface['ACL'] == self.param['acl1']:
+            acl = self.param['acl2']
+        elif interface['ACL'] == self.param['acl2']:
+            acl = self.param['acl1']
+        else:
+            raise ConnectionError('Unable to find selected ACLs on interface')
+        print(f"Switching ACL: {interface['ACL']} -> {acl}")
+        # Setting direction for ACL command
+        direction = self.param['direction']
+        for full, short in {'Inbound':'in', 'Outgoing':'out'}.items():
+            direction = direction.replace(full, short)
+        # Completing ACL command
+        acl = f'no ip access {direction}' if acl == 'not set' else f'ip access {acl} {direction}'
+        # Setting full commands list
+        return ['conf t', f"int {self.param['interface']}", acl, 'exit', 'exit']
+
+    @staticmethod
+    def to_bytes(string):
+        return f'{string}\n'.encode('utf-8')
+
 
 def input_check(param):
     if not param['ip']:
@@ -35,75 +109,16 @@ def input_check(param):
         param['interface'] = input('Interface: ')
     return param
 
-def login(telnet, param, timeout=3):
-    """Cisco device login"""
-    if param['username']:
-        telnet.read_until(b'Username', timeout)
-        telnet.write(to_bytes(param['username']))
-    telnet.read_until(b'Password', timeout)
-    telnet.write(to_bytes(param['password']))
-    # Checking enable status
-    index, *_ = telnet.expect([b'>', b'#'], timeout)
-    # Switching to privilege mode using enable password
-    if index == -1:
-        raise ConnectionError('Unable to login')
-    elif index == 0 and param['enable'] != False:
-        telnet.write(b'enable\n')
-        telnet.read_until(b'Password', timeout)
-        telnet.write(to_bytes(param['enable']))
-        index, *_ = telnet.expect([b'#'], timeout)
-        if index == -1: raise ConnectionError('Unable to set privilege mode')
-
-def execute(telnet, commands, timeout=5):
-    """Running command list"""
-    result = {}
-    for command in commands:
-        telnet.write(to_bytes(command))
-        output = telnet.read_until(b'#', timeout).decode('utf-8')
-        result[command] = output.replace('\r\n', '\n')
-    if len(sys.argv[1:]) and sys.argv[1] == '-v':
-        for i in result.values(): print(i)
-    return result
-
-def get_acl(telnet):
-    """Getting current ACL on interface"""
-    cmd = f"sh ip int {param['interface']} | include {param['direction']}"
-    output = execute(telnet, [cmd])
-    output = re.search(r'access list is (?P<ACL>.+)\n', output[cmd])
-    if output:
-        print(f"{param['interface']} {param['direction']}: {output['ACL']}")
-        return output
-    else: 
-        raise ConnectionError('Unable to access device')
-
-def set_commands(output, param):
-    """Preparing command list for ACL switch"""
-    # Setting new ACL different from current
-    if output['ACL'] == param['acl1']:
-        acl = param['acl2']
-    elif output['ACL'] == param['acl2']:
-        acl = param['acl1']
-    else:
-        raise ConnectionError('Unable to find selected ACLs on interface')
-    print(f"Switching ACL: {output['ACL']} -> {acl}")
-    # Setting direction for ACL command
-    direction = param['direction']
-    for full, short in {'Inbound':'in', 'Outgoing':'out'}.items():
-        direction = direction.replace(full, short)
-    # Completing ACL command
-    acl = f'no ip access {direction}' if acl == 'not set' else f'ip access {acl} {direction}'
-    # Setting full commands list
-    return ['conf t', f"int {param['interface']}", acl, 'exit', 'exit']
 
 def acl_switch(param):
     """Switches ACL on Cisco device"""
-    with telnetlib.Telnet(param['ip'], 23, 10) as telnet:
-        login(telnet, param)
-        output = get_acl(telnet)
-        commands = set_commands(output, param)
-        execute(telnet, commands)
-        get_acl(telnet)
-
+    with telnetlib.Telnet(param['ip'], timeout=10) as telnet:
+        cisco = CiscoTelnet(telnet, param)
+        cisco.login()
+        interface = cisco.get_acl()
+        commands = cisco.set_acl_cmd(interface)
+        cisco.execute(commands)
+        cisco.get_acl()
 
 try:
     with open('config.yaml') as f:
