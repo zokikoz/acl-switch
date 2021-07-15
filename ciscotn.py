@@ -2,6 +2,7 @@
 
 from telnetlib import Telnet
 
+
 class CiscoTelnet(Telnet):
     """Cisco device access via telnet session"""
     

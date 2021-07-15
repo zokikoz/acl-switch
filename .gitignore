@@ -1,2 +1,2 @@
-# Ignore bundler config.
+# Ignore Python cache directory
 /__pycache__
