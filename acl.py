@@ -1,61 +1,25 @@
 #!/usr/bin/env python3
 # Cisco ACL switch
 
-import telnetlib
+import ciscotn
 import getpass
 import re
 import yaml
 import sys
 
-sys.tracebacklimit = 0  # Hide traceback
 
-
-class CiscoTelnet:
-    """Cisco device access via telnet session"""
+class CiscoTelnet(ciscotn.CiscoTelnet):
+    """ACL methods mixin to CiscoTelnet class"""
     
-    def __init__(self, telnet, param={}):
+    def __init__(self, param={}):
         self.param = {
-            'ip': None,
-            'username': None,
-            'password': None,
-            'enable': None,
             'direction': 'Inbound',
             'acl1': None,
             'acl2': None,
             'interface': None
             }
         self.param.update(param)
-        self.tn = telnet
-
-    def login(self, timeout=3):
-        """Cisco device login"""
-        if self.param['username']:
-            self.tn.read_until(b'Username', timeout)
-            self.tn.write(self.to_bytes(self.param['username']))
-        self.tn.read_until(b'Password', timeout)
-        self.tn.write(self.to_bytes(self.param['password']))
-        # Checking enable status
-        index, *_ = self.tn.expect([b'>', b'#'], timeout)
-        # Switching to privilege mode using enable password
-        if index == -1:
-            raise ConnectionError('Unable to login')
-        elif index == 0 and self.param['enable']:
-            self.tn.write(b'enable\n')
-            self.tn.read_until(b'Password', timeout)
-            self.tn.write(self.to_bytes(self.param['enable']))
-            index, *_ = self.tn.expect([b'#'], timeout)
-            if index == -1: raise ConnectionError('Unable to set privilege mode')
-
-    def execute(self, commands, timeout=5):
-        """Running command list"""
-        result = {}
-        for command in commands:
-            self.tn.write(self.to_bytes(command))
-            output = self.tn.read_until(b'#', timeout).decode('utf-8')
-            result[command] = output.replace('\r\n', '\n')
-        if len(sys.argv[1:]) and sys.argv[1] == '-v':
-            for i in result.values(): print(i)
-        return result
+        super().__init__(param)
 
     def get_acl(self):
         """Getting current ACL on interface"""
@@ -87,10 +51,6 @@ class CiscoTelnet:
         # Setting full commands list
         return ['conf t', f"int {self.param['interface']}", acl, 'exit', 'exit']
 
-    @staticmethod
-    def to_bytes(string):
-        return f'{string}\n'.encode('utf-8')
-
 
 def input_check(param):
     if not param['ip']:
@@ -107,13 +67,13 @@ def input_check(param):
         param['acl2'] = input('ACL 2: ')
     if not param['interface']:
         param['interface'] = input('Interface: ')
+   
     return param
 
 
 def acl_switch(param):
     """Switches ACL on Cisco device"""
-    with telnetlib.Telnet(param['ip'], timeout=10) as telnet:
-        cisco = CiscoTelnet(telnet, param)
+    with CiscoTelnet(param) as cisco:
         cisco.login()
         interface = cisco.get_acl()
         commands = cisco.set_acl_cmd(interface)
@@ -125,6 +85,12 @@ try:
         params = yaml.safe_load(f)
 except FileNotFoundError:
    print('config.yaml not found, using built-in configuration')
+   params = [{}]
+
+sys.tracebacklimit = 0  # Hide traceback
+if sys.argv[1:] and sys.argv[1] == '-v':
+    sys.tracebacklimit = 1000  # Enable traceback
+    for param in params: param['verbose'] = True
 
 for param in params:
     param = input_check(param)
