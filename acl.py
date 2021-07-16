@@ -70,6 +70,7 @@ def input_check(param):
 def acl_switch(param):
     """Switches ACL on Cisco device"""
     with CiscoTelnet(**param) as cisco:
+        print(f'Accessing {cisco.host}')
         cisco.login()
         interface = cisco.get_acl()
         commands = cisco.set_acl_cmd(interface)
